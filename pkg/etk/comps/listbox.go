@@ -16,6 +16,14 @@ type ListItems interface {
 	Show(i int) ui.Text
 }
 
+// StyleLiner is an optional interface that [ListItems] can implement.
+type StyleLiner interface {
+	// StyleLine returns a "line styling" for item i, which gets applied to
+	// whole lines, including any empty spaces to the right of the last line and
+	// paddings.
+	StyleLine(i int) ui.Styling
+}
+
 type stringItems []string
 
 // StringItems returns a [ListItems] backed up a slice of strings.
@@ -30,12 +38,15 @@ func ListBox(c etk.Context) (etk.View, etk.React) {
 	selectedVar := etk.State(c, "selected", 0)
 	// Layout configuration variables.
 	multiColumnVar := etk.State(c, "multi-column", false)
+	leftPaddingVar := etk.State(c, "left-padding", 0)
+	rightPaddingVar := etk.State(c, "right-padding", 0)
 	// Internal UI state (see also comment in listBoxView).
 	firstVar := etk.State(c, "-first", 0)
 	contentHeightVar := etk.State(c, "-content-height", 0)
 
 	view := &listBoxView{
-		itemsVar.Get(), selectedVar.Get(), multiColumnVar.Get(),
+		itemsVar.Get(), selectedVar.Get(),
+		multiColumnVar.Get(), leftPaddingVar.Get(), rightPaddingVar.Get(),
 		firstVar, contentHeightVar}
 	return view,
 		c.Binding(func(e term.Event) etk.Reaction {
@@ -80,9 +91,11 @@ func ListBox(c etk.Context) (etk.View, etk.React) {
 }
 
 type listBoxView struct {
-	items       ListItems
-	selected    int
-	multiColumn bool
+	items        ListItems
+	selected     int
+	multiColumn  bool
+	leftPadding  int
+	rightPadding int
 	// The first element that was shown last time.
 	//
 	// Used to provide some continuity in the UI when the terminal size has
@@ -114,13 +127,18 @@ func (w *listBoxView) renderSingleColumn(width, height int) *term.Buffer {
 	first, firstCrop := getVerticalWindow(w.items, w.selected, w.first.Get(), height)
 	w.first.Set(first)
 
-	v := etk.TextView{Wrap: etk.NoWrap}
+	v := etk.TextView{Wrap: etk.NoWrap,
+		LeftPadding: w.leftPadding, RightPadding: w.rightPadding}
+	addSpanAndLineStyling := func(t ui.Text, st ui.Styling) {
+		v.Spans = append(v.Spans, t)
+		v.LineStylings = append(v.LineStylings, st)
+	}
 	lines := 0
 	n := w.items.Len()
 	var i int
 	for i = first; i < n && lines < height; i++ {
 		if i > first {
-			v.Spans = append(v.Spans, ui.T("\n"))
+			addSpanAndLineStyling(ui.T("\n"), nil)
 		}
 
 		text := w.items.Show(i)
@@ -129,17 +147,21 @@ func (w *listBoxView) renderSingleColumn(width, height int) *term.Buffer {
 			text = ui.StyleText(text, ui.Inverse)
 		}
 
+		var lineStyling ui.Styling
+		if styleLiner, ok := w.items.(StyleLiner); ok {
+			lineStyling = styleLiner.StyleLine(i)
+		}
 		if i == first {
 			keptLines := text.SplitByRune('\n')[firstCrop:]
 			for i, line := range keptLines {
 				if i > 0 {
-					v.Spans = append(v.Spans, ui.T("\n"))
+					addSpanAndLineStyling(ui.T("\n"), nil)
 				}
-				v.Spans = append(v.Spans, line)
+				addSpanAndLineStyling(line, lineStyling)
 			}
 			lines += len(keptLines)
 		} else {
-			v.Spans = append(v.Spans, text)
+			addSpanAndLineStyling(text, lineStyling)
 			lines += text.CountLines()
 		}
 	}
@@ -167,19 +189,28 @@ func (w *listBoxView) renderMultiColumn(width, height int) *term.Buffer {
 	hasCropped := false
 	last := first
 	for i := first; i < n; i += colHeight {
-		col := etk.TextView{Wrap: etk.NoWrap}
+		col := etk.TextView{Wrap: etk.NoWrap,
+			LeftPadding: w.leftPadding, RightPadding: w.rightPadding}
+
 		// Render the column starting from i.
 		for j := i; j < i+colHeight && j < n; j++ {
 			last = j
 			if j > i {
 				col.Spans = append(col.Spans, ui.T("\n"))
+				col.LineStylings = append(col.LineStylings, nil)
 			}
 			text := items.Show(j)
 			if j == selected {
 				text = ui.StyleText(text, ui.Inverse)
 				col.DotBefore = len(col.Spans)
 			}
+
 			col.Spans = append(col.Spans, text)
+			var lineStyling ui.Styling
+			if styleLiner, ok := w.items.(StyleLiner); ok {
+				lineStyling = styleLiner.StyleLine(i)
+			}
+			col.LineStylings = append(col.LineStylings, lineStyling)
 		}
 
 		colWidth := maxWidth(items, padding, i, i+colHeight)

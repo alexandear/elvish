@@ -48,9 +48,12 @@ const (
 )
 
 type TextView struct {
-	Spans     []ui.Text
-	DotBefore int
-	Wrap      TextWrap
+	Spans        []ui.Text
+	DotBefore    int
+	Wrap         TextWrap
+	LeftPadding  int
+	RightPadding int
+	LineStylings []ui.Styling
 }
 
 var DotHere ui.Text = ui.Text{}
@@ -60,7 +63,7 @@ func TextNoWrap(spans ...ui.Text) TextView    { return makeText(NoWrap, spans) }
 func TextEagerWrap(spans ...ui.Text) TextView { return makeText(EagerWrap, spans) }
 
 func makeText(w TextWrap, spans []ui.Text) TextView {
-	v := TextView{make([]ui.Text, 0, len(spans)), 0, w}
+	v := TextView{Spans: make([]ui.Text, 0, len(spans)), Wrap: w}
 	for i, span := range spans {
 		if unsafe.SliceData(span) == unsafe.SliceData(DotHere) {
 			v.DotBefore = i
